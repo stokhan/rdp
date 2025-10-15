@@ -1,0 +1,77 @@
+name: Windows RDP with Ngrok - 6 Hours
+
+on: 
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    
+    steps:
+    - name: Download Ngrok
+      run: |
+        Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
+        
+    - name: Extract Ngrok
+      run: |
+        Expand-Archive ngrok.zip
+        Move-Item ngrok.exe ngrok/ 2>$null
+        
+    - name: Setup Ngrok Auth
+      run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
+      env:
+        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+        
+    - name: Enable Remote Desktop
+      run: |
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 0
+        
+    - name: Create User fourstore
+      run: |
+        $password = ConvertTo-SecureString "fourstore123" -AsPlainText -Force
+        New-LocalUser -Name "fourstore" -Password $password -FullName "Four Store" -Description "RDP User"
+        Add-LocalGroupMember -Group "Administrators" -Member "fourstore"
+        Add-LocalGroupMember -Group "Remote Desktop Users" -Member "fourstore"
+        
+    - name: Start Ngrok Tunnel
+      run: |
+        Start-Process -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 3389" -WindowStyle Hidden
+        
+    - name: Wait and Get Ngrok URL
+      run: |
+        Start-Sleep -Seconds 10
+        $tunnels = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels" -UseBasicParsing
+        $tcpUrl = $tunnels.tunnels | Where-Object { $_.proto -eq "tcp" }
+        
+        echo "==========================================="
+        echo "🚀 WINDOWS RDP READY FOR 6 HOURS"
+        echo "==========================================="
+        echo "Username: fourstore"
+        echo "Password: fourstore123"
+        echo "RDP URL: $($tcpUrl.public_url)"
+        echo "Computer: $($tcpUrl.public_url.Replace('tcp://',''))"
+        echo ""
+        echo "⏰ Session will auto-stop in: 360 minutes (6 hours)"
+        echo "==========================================="
+        
+    - name: Keep Alive for 6 Hours
+      run: |
+        $duration = 360 * 60  # 6 hours in seconds
+        $startTime = Get-Date
+        $endTime = $startTime.AddSeconds($duration)
+        
+        echo "Session started at: $startTime"
+        echo "Session will end at: $endTime"
+        
+        while ((Get-Date) -lt $endTime) {
+            $remaining = ($endTime - (Get-Date)).TotalMinutes
+            echo "⏰ Time remaining: $([math]::Round($remaining)) minutes"
+            Start-Sleep -Seconds 300  # Wait 5 minutes
+        }
+        
+        echo "🛑 Session ended at: $(Get-Date)"
